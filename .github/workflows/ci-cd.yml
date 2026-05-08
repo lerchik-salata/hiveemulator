@@ -168,6 +168,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Generate config.json for DEV
+        run: |
+          sed "s|PLACEHOLDER|${{ secrets.SERVER_HOST }}:8080|g" config.json > config.dev.json
+          cat config.dev.json
+
       - name: Copy docker-compose to VM
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -177,7 +182,16 @@ jobs:
           source: "docker-compose.yml"
           target: "~/hiveemulator-dev/"
 
-      - name: Deploy via SSH
+      - name: Copy config.json to VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "config.dev.json"
+          target: "~/hiveemulator-dev/"
+
+      - name: Rename config and deploy
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -185,6 +199,8 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             cd ~/hiveemulator-dev
+            mv -f config.dev.json config.json
+            cat config.json
             export GH_OWNER=${{ secrets.GH_OWNER }}
             export IMAGE_TAG=dev-${{ github.run_number }}
             export API_PORT=8080
@@ -192,7 +208,7 @@ jobs:
             export ASPNET_ENV=Development
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             docker compose pull
-            docker compose up -d
+            docker compose up -d --force-recreate
             docker compose ps
 
   deploy-prod:
@@ -203,6 +219,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Generate config.json for PROD
+        run: |
+          sed "s|PLACEHOLDER|${{ secrets.SERVER_HOST }}:5000|g" config.json > config.prod.json
+          cat config.prod.json
+
       - name: Copy docker-compose to VM
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -212,7 +233,16 @@ jobs:
           source: "docker-compose.yml"
           target: "~/hiveemulator-prod/"
 
-      - name: Deploy via SSH
+      - name: Copy config.json to VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "config.prod.json"
+          target: "~/hiveemulator-prod/"
+
+      - name: Rename config and deploy
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -220,6 +250,8 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             cd ~/hiveemulator-prod
+            mv -f config.prod.json config.json
+            cat config.json
             export GH_OWNER=${{ secrets.GH_OWNER }}
             export IMAGE_TAG=1.0.${{ github.run_number }}
             export API_PORT=5000
@@ -227,5 +259,5 @@ jobs:
             export ASPNET_ENV=Production
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             docker compose pull
-            docker compose up -d
+            docker compose up -d --force-recreate
             docker compose ps
