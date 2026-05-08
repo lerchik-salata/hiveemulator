@@ -421,7 +421,7 @@ const MapView = () => {
                         textAlign: "center",
                         minWidth: "300px"
                     }}>
-                        <h3>Set Interference Radius</h3>
+                        <h3>Set Interference123 Radius</h3>
                         <p>Lat: {interferenceRadiusModal.coords.lat} | Lon: {interferenceRadiusModal.coords.lon}</p>
                         <input 
                             type="number" 
