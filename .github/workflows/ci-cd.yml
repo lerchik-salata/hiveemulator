@@ -5,7 +5,7 @@ on:
     branches: [main, dev]
   pull_request:
     branches: [main]
-  workflow_dispatch: 
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
@@ -48,7 +48,8 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-      - run: |
+      - name: Publish .NET app
+        run: |
           cd src/CommunicationControl
           dotnet publish -c Release -o ./published \
             DevOpsProject/DevOpsProject.CommunicationControl.API.csproj
@@ -65,7 +66,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: |
+      - name: Build client
+        run: |
           cd src/MapClient
           npm install
           npm run build
@@ -83,11 +85,19 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+
+      - name: Download API build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: api-build
+          path: src/CommunicationControl/published
+
       - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Determine tag
         id: tag
         run: |
@@ -98,6 +108,7 @@ jobs:
             echo "tag=dev-${{ github.run_number }}" >> $GITHUB_OUTPUT
             echo "extra=dev-latest" >> $GITHUB_OUTPUT
           fi
+
       - uses: docker/build-push-action@v5
         with:
           context: src/CommunicationControl
@@ -116,11 +127,19 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+
+      - name: Download client build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: client-build
+          path: src/MapClient/dist
+
       - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Determine tag
         id: tag
         run: |
@@ -131,9 +150,11 @@ jobs:
             echo "tag=dev-${{ github.run_number }}" >> $GITHUB_OUTPUT
             echo "extra=dev-latest" >> $GITHUB_OUTPUT
           fi
+
       - uses: docker/build-push-action@v5
         with:
           context: src/MapClient
+          file: src/MapClient/Dockerfile
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/map-client:${{ steps.tag.outputs.tag }}
@@ -145,7 +166,32 @@ jobs:
     if: github.ref == 'refs/heads/dev'
     environment: development
     steps:
-      - name: Deploy via SSH
+      - uses: actions/checkout@v4
+
+      - name: Generate config.json for DEV
+        run: |
+          sed "s|PLACEHOLDER|${{ secrets.SERVER_HOST }}:8080|g" config.json > config.dev.json
+          cat config.dev.json
+
+      - name: Copy docker-compose to VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "docker-compose.yml"
+          target: "~/hiveemulator-dev/"
+
+      - name: Copy config.json to VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "config.dev.json"
+          target: "~/hiveemulator-dev/"
+
+      - name: Rename config and deploy
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -153,11 +199,16 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             cd ~/hiveemulator-dev
+            mv -f config.dev.json config.json
+            cat config.json
             export GH_OWNER=${{ secrets.GH_OWNER }}
             export IMAGE_TAG=dev-${{ github.run_number }}
+            export API_PORT=8080
+            export UI_PORT=8081
+            export ASPNET_ENV=Development
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             docker compose pull
-            docker compose up -d
+            docker compose up -d --force-recreate
             docker compose ps
 
   deploy-prod:
@@ -166,7 +217,32 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
     environment: production
     steps:
-      - name: Deploy via SSH
+      - uses: actions/checkout@v4
+
+      - name: Generate config.json for PROD
+        run: |
+          sed "s|PLACEHOLDER|${{ secrets.SERVER_HOST }}:5000|g" config.json > config.prod.json
+          cat config.prod.json
+
+      - name: Copy docker-compose to VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "docker-compose.yml"
+          target: "~/hiveemulator-prod/"
+
+      - name: Copy config.json to VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "config.prod.json"
+          target: "~/hiveemulator-prod/"
+
+      - name: Rename config and deploy
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -174,9 +250,14 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             cd ~/hiveemulator-prod
+            mv -f config.prod.json config.json
+            cat config.json
             export GH_OWNER=${{ secrets.GH_OWNER }}
             export IMAGE_TAG=1.0.${{ github.run_number }}
+            export API_PORT=5000
+            export UI_PORT=80
+            export ASPNET_ENV=Production
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             docker compose pull
-            docker compose up -d
+            docker compose up -d --force-recreate
             docker compose ps
